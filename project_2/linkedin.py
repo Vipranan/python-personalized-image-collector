@@ -9,6 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from zipfile import ZipFile
+from duckduckgo_search import DDGS
 
 # Load li_at cookie from .env
 load_dotenv()
@@ -189,6 +190,24 @@ def fetch_medium_profile_image(profile_url):
     except Exception as e:
         return None, None
 
+def fetch_duckduckgo_images(query, max_results=5):
+    images = []
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.6367.207 Brave/124.0.6367.207 Safari/537.36"
+    try:
+        with DDGS() as ddgs:  # <-- removed user_agent argument
+            for r in ddgs.images(query, max_results=max_results):
+                img_url = r["image"]
+                img_response = requests.get(img_url, timeout=10, headers={"User-Agent": user_agent})
+                if img_response.status_code == 200:
+                    filename = os.path.basename(img_url.split("?")[0])
+                    filepath = os.path.join(SAVE_FOLDER, f"duckduckgo_{filename}")
+                    with open(filepath, "wb") as f:
+                        f.write(img_response.content)
+                    images.append((filename, filepath))
+    except Exception as e:
+        print(f"DuckDuckGo error: {e}")
+    return images
+
 # ==== LinkedIn UI ====
 st.set_page_config(page_title="LinkedIn Profile Image Fetcher", layout="centered")
 st.title("🔗 LinkedIn Profile Image Fetcher")
@@ -330,5 +349,57 @@ if st.session_state.medium_filepaths:
         label="⬇️ Download All Medium Images as ZIP",
         data=zip_file,
         file_name="medium_profile_images.zip",
+        mime="application/zip"
+    )
+
+# ==== DuckDuckGo Images UI ====
+st.markdown("---")
+st.title("🖼️ DuckDuckGo Images Fetcher")
+
+st.markdown("Paste **one or more queries** below to fetch related images:")
+
+input_queries = st.text_area("Image Queries (one per line)", height=150, key="queries")
+max_results = st.slider("Max Results per Query", 1, 100, 10, key="max_results")
+start_ddg = st.button("Fetch DDG Images")
+
+if "ddg_filepaths" not in st.session_state:
+    st.session_state.ddg_filepaths = []
+
+if start_ddg:
+    queries = [query.strip() for query in input_queries.strip().splitlines() if query.strip()]
+    if not queries:
+        st.warning("Please enter at least one query.")
+    else:
+        ddg_filepaths = []
+        for query in queries:
+            with st.spinner(f"Fetching images for query: {query}"):
+                with DDGS() as ddgs:
+                    for r in ddgs.images(query, max_results=max_results):
+                        img_url = r.get("image")
+                        if img_url:
+                            try:
+                                img_response = requests.get(img_url, timeout=10)
+                                if img_response.status_code == 200:
+                                    # Create a safe filename
+                                    filename = f"ddg_{int(time.time())}.jpg"
+                                    filepath = os.path.join(SAVE_FOLDER, filename)
+                                    with open(filepath, "wb") as f:
+                                        f.write(img_response.content)
+                                    ddg_filepaths.append(filepath)
+                                    st.image(filepath, caption=filename, width=200)
+                            except Exception as e:
+                                st.warning(f"❌ Failed to download image: {img_url}")
+        st.session_state.ddg_filepaths = ddg_filepaths
+
+# Always display previously fetched DDG images and ZIP download
+if st.session_state.ddg_filepaths:
+    st.markdown("### Previously Fetched DDG Images")
+    for path in st.session_state.ddg_filepaths:
+        st.image(path, caption=os.path.basename(path), width=200)
+    zip_file = zip_images(st.session_state.ddg_filepaths)
+    st.download_button(
+        label="⬇️ Download All DDG Images as ZIP",
+        data=zip_file,
+        file_name="ddg_images.zip",
         mime="application/zip"
     )
